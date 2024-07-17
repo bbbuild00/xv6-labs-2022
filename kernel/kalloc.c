@@ -23,6 +23,10 @@ struct {
   struct run *freelist;
 } kmem;
 
+//定义一个全局变量和锁
+int useReference[PHYSTOP/PGSIZE];  //记录每个物理内存页的引用计数
+struct spinlock ref_count_lock;  //自旋锁，用于保护 useReference 数组的并发访问
+
 void
 kinit()
 {
@@ -47,9 +51,20 @@ void
 kfree(void *pa)
 {
   struct run *r;
+  int temp;
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
+    
+  acquire(&ref_count_lock);
+  //减少物理页的引用计数
+  useReference[(uint64)pa/PGSIZE] -= 1;
+  temp = useReference[(uint64)pa/PGSIZE];
+  release(&ref_count_lock);
+  //当引用计数小于等于 0 的时候，才回收对应的页。
+  if (temp > 0)
+    return;
+
 
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
@@ -72,8 +87,13 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+  if(r){
     kmem.freelist = r->next;
+    acquire(&ref_count_lock);
+    //初始化新分配的物理页的引用计数为 1
+    useReference[(uint64)r / PGSIZE] = 1;
+    release(&ref_count_lock);
+  }
   release(&kmem.lock);
 
   if(r)
