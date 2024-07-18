@@ -22,6 +22,9 @@ int getpid(void);
 char* sbrk(int);
 int sleep(int);
 int uptime(void);
+int trace(int);  //添加
+struct sysinfo; //声明结构体
+int sysinfo(struct sysinfo *); //声明对应函数
 
 // ulib.c
 int stat(const char*, struct stat*);

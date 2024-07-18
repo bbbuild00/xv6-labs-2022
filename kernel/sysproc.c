@@ -5,6 +5,38 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "sysinfo.h"
+
+uint64
+sys_sysinfo(void)
+{
+  // 从用户态读入一个指针，作为存放 sysinfo 结构的缓冲区
+  uint64 addr;
+  argaddr(0, &addr);
+  if(addr<0)
+    return -1;
+  struct sysinfo sinfo;
+  sinfo.freemem = count_free_mem();
+  sinfo.nproc = count_process();
+  // copyout函数存在于vm.c中
+  // 用于结合当前进程的页表，获得进程传进来的指针（逻辑地址）对应的物理地址
+  // 然后将 &sinfo 中的数据复制到该指针所指位置，供用户进程使用。
+  if(copyout(myproc()->pagetable, addr, (char *)&sinfo, sizeof(sinfo)) < 0)
+    return -1;
+  return 0;
+}
+
+//给当前进程结构体中的syscall_trace赋值
+uint64
+sys_trace(void)
+{
+  int mask;
+  argint(0,&mask);
+  if(mask < 0) 
+    return -1;
+  myproc()->syscall_trace |= mask;
+  return 0;
+}
 
 uint64
 sys_exit(void)

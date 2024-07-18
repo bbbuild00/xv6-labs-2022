@@ -80,3 +80,26 @@ kalloc(void)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
 }
+
+uint64
+count_free_mem(void)
+{
+  struct run *r;
+  
+  //给内存分配上锁，禁止访问，防止出现冲突
+  acquire(&kmem.lock);
+  
+  //获取空的页表数量r，剩余内存大小就是 页表数量×PGSIZE
+  uint64 mem_bytes = 0;
+  r = kmem.freelist;
+  //循环读页表列表，并且给mem_bytes赋值
+  while(r){
+    mem_bytes += PGSIZE;
+    r = r->next;
+  }
+  
+  //解锁，返回剩余内存大小
+  release(&kmem.lock);
+  return mem_bytes;
+}
+

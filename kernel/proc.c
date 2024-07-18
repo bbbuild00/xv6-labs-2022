@@ -145,7 +145,8 @@ found:
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
-
+  p->syscall_trace = 0;   //这里初始化为0
+  
   return p;
 }
 
@@ -309,6 +310,8 @@ fork(void)
   np->cwd = idup(p->cwd);
 
   safestrcpy(np->name, p->name, sizeof(p->name));
+  
+  np->syscall_trace = p->syscall_trace;   //在这里把父进程的mask获取到
 
   pid = np->pid;
 
@@ -681,3 +684,17 @@ procdump(void)
     printf("\n");
   }
 }
+uint64
+count_process(void)
+{
+  struct proc *p;
+  uint64 process_num = 0;
+  
+  //循环读所有的进程，并且查看其状态，可用进程就让process_num，然后返回
+  for(p = proc; p < &proc[NPROC]; p++){
+  	if(p->state != UNUSED)
+  	  process_num++;
+  }
+  return process_num;
+}
+
