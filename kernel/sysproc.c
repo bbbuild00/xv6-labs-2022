@@ -5,7 +5,45 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+uint64
+sys_sigalarm(void)
+{
+  int ticks;
+  uint64 handler_va;
 
+  // 从用户态获取系统调用参数：ticks 和 handler_va
+  argint(0, &ticks);
+  argaddr(1, &handler_va);
+
+  // 获取当前进程的 proc 结构体指针
+  struct proc* proc = myproc();
+
+  // 设置报警时间间隔和报警处理函数的虚拟地址
+  proc->alarm_interval = ticks;
+  proc->handler_va = handler_va;
+
+  // 设置标志表示已经设置了报警处理
+  proc->have_return = 1; // true
+
+  // 返回 0 表示成功设置报警
+  return 0;
+}
+
+uint64
+sys_sigreturn(void)
+{
+  // 获取当前进程的 proc 结构体指针
+  struct proc* proc = myproc();
+
+  // 恢复保存的中断帧，以便返回到中断代码之前的状态
+  *proc->trapframe = proc->saved_trapframe;
+
+  // 设置标志表示已经从信号处理程序返回
+  proc->have_return = 1; // true
+
+  // 返回从中断帧中获取的 a0 寄存器值
+  return proc->trapframe->a0;
+}
 uint64
 sys_exit(void)
 {
@@ -67,6 +105,7 @@ sys_sleep(void)
     sleep(&ticks, &tickslock);
   }
   release(&tickslock);
+  backtrace();
   return 0;
 }
 

@@ -76,9 +76,27 @@ usertrap(void)
   if(killed(p))
     exit(-1);
 
-  // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+    
+    // 如果是定时器中断，让出 CPU
+  if(which_dev == 2) {
+    struct proc *proc = myproc();
+    // 如果进程设置了定时器间隔且已经从信号处理程序返回
+    if (proc->alarm_interval && proc->have_return) {
+      // 每次定时器中断，增加 passed_ticks 计数
+      if (++proc->passed_ticks == 2) {
+        // 保存当前的中断帧到 proc->saved_trapframe
+        proc->saved_trapframe = *p->trapframe;
+        // 设置 EPC 寄存器为处理程序的虚拟地址，将 CPU 转移到处理程序
+        proc->trapframe->epc = proc->handler_va;
+        // 重置 passed_ticks
+        proc->passed_ticks = 0;
+        // 防止处理程序的重入调用
+        proc->have_return = 0;
+      }
+    }
+    // 让出 CPU
     yield();
+  }
 
   usertrapret();
 }

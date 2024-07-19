@@ -49,6 +49,16 @@ printint(int xx, int base, int sign)
     consputc(buf[i]);
 }
 
+void
+backtrace(void)
+{
+  uint64 fp_address = r_fp();
+  while(fp_address != PGROUNDDOWN(fp_address)) {
+    printf("%p\n", *(uint64*)(fp_address-8));
+    fp_address = *(uint64*)(fp_address - 16);
+  }
+}
+
 static void
 printptr(uint64 x)
 {

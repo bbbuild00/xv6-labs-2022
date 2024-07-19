@@ -84,6 +84,20 @@ enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 // Per-process state
 struct proc {
   struct spinlock lock;
+  // 用户页面中报警处理函数的虚拟地址
+  uint64 handler_va;
+
+  // 报警时间间隔（以时钟滴答计数）
+  int alarm_interval;
+
+  // 自上次报警以来经过的时钟滴答数
+  int passed_ticks;
+
+  // 保存寄存器状态，以便在返回中断代码时进行恢复
+  struct trapframe saved_trapframe;
+
+  // 表示是否已经从报警处理程序返回的布尔值
+  int have_return;
 
   // p->lock must be held when using these:
   enum procstate state;        // Process state
