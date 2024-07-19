@@ -308,45 +308,52 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // physical memory.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
-int
-uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
-{
-  pte_t *pte;
-  uint64 pa, i;
-  uint flags;
-  //char *mem;
 
+// 该函数用于复制一个进程的虚拟内存到另一个进程
+int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
+{
+  pte_t *pte; // 声明页表项的指针
+  uint64 pa, i; // 分别声明物理地址和循环变量
+  uint flags; // 声明标志变量
+
+  // 对整个虚拟内存空间进行遍历，每次步长为一个页面的大小
   for(i = 0; i < sz; i += PGSIZE){
+    // 当页表项不存在，抛出panic
     if((pte = walk(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
+    // 当内存页不存在时，抛出panic
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
-    // 只有父进程内存页是可写的，才会将子进程和父进程都设置为COW和只读的；否则，都是只读的，但是不标记为COW，因为本来就是只读的，不会进行写入
-    // 如果不这样做，父进程内存只读的时候，标记为COW，那么经过缺页中断，程序就可以写入数据，于原本的不符合
+
+    // 如果页表项被标记为可写，那么将其标记为只读，并设置 COW (写时复制)标志
     if (*pte & PTE_W) {
-      *pte &= ~PTE_W;
-      *pte |= PTE_RSW;
+      *pte &= ~PTE_W; // 移除写权限
+      *pte |= PTE_RSW; // 增加读，共享和写时复制权限。
     }
+    // 获取页对应的物理地址
     pa = PTE2PA(*pte);
-    
+
+    // 引用计数增1
     acquire(&ref_count_lock);
     useReference[pa/PGSIZE] += 1;
     release(&ref_count_lock);
+
+    // 获取页表项的标志字段
     flags = PTE_FLAGS(*pte);
-    //if((mem = kalloc()) == 0)
-      //goto err;
-    //memmove(mem, (char*)pa, PGSIZE);
+
+    // 如果映射过程中失败，则释放已占用的空间，然后返回错误。
     if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
-      //kfree(mem);
       goto err;
     }
   }
   return 0;
 
- err:
-  uvmunmap(new, 0, i / PGSIZE, 1);
-  return -1;
+// 错误处理
+err:
+  uvmunmap(new, 0, i / PGSIZE, 1); // 对错误恢复的处理，即将已经映射的部分解除映射
+  return -1; // 返回错误代码
 }
+
 
 // mark a PTE invalid for user access.
 // used by exec for the user stack guard page.
@@ -371,46 +378,66 @@ int checkcowpage(uint64 va, pte_t *pte, struct proc* p) {
 // Copy from kernel to user.
 // Copy len bytes from src to virtual address dstva in a given page table.
 // Return 0 on success, -1 on error.
-int
-copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
+//用于将内核地址空间中的数据复制到用户地址空间，即实现内核到用户的数据传送。
+int copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
 
+  // 进入数据复制循环，直到所有数据都被复制为主
   while(len > 0){
+    // 计算出目标虚拟地址的下边界
     va0 = PGROUNDDOWN(dstva);
+    // 获取与虚拟地址对应的物理地址
     pa0 = walkaddr(pagetable, va0);
+    // 如果物理地址为0，即未找到对应的物理地址，返回错误
     if(pa0 == 0)
       return -1;
-    
+
+    // 获取当前进程
     struct proc *p = myproc();
+    // 获取虚拟地址对应的页表项
     pte_t *pte = walk(pagetable, va0, 0);
+    // 如果页表项不存在，标记进程为killed状态
     if (*pte == 0)
       p->killed = 1;
+    // 检查是否执行了写时复制操作，如果是，则在内存中复制一份页
     if (checkcowpage(va0, pte, p)) 
     {
       char *mem;
+      // 从内存中分配一页内存
       if ((mem = kalloc()) == 0) {
+        // 如果内存空间不足，标记进程为killed状态
         p->killed = 1;
       }else {
+        // 将当前页的内容复制到新分配的页中
         memmove(mem, (char*)pa0, PGSIZE);
 
+        // 获取当前的页表项标志
         uint flags = PTE_FLAGS(*pte);
 
+        // 解除当前虚拟地址与物理地址的映射关系，并回收页表以及物理页
         uvmunmap(pagetable, va0, 1, 1);
+        // 设置新的页表项，为新的物理页设置物理地址，权限标志以及可写属性
         *pte = (PA2PTE(mem) | flags | PTE_W);
+        // 清除只读标志
         *pte &= ~PTE_RSW;
+        // 更新物理页地址
         pa0 = (uint64)mem;
       }
     }
+    // 计算在当前页中需要复制的字节数
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
+    // 从源地址复制数据到目标地址
     memmove((void *)(pa0 + (dstva - va0)), src, n);
 
+    // 更新剩余需要复制的字节数，源地址和目标虚拟地址
     len -= n;
     src += n;
     dstva = va0 + PGSIZE;
   }
+  // 所有数据复制完成，返回成功
   return 0;
 }
 

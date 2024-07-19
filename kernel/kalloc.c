@@ -47,12 +47,13 @@ freerange(void *pa_start, void *pa_end)
 // which normally should have been returned by a
 // call to kalloc().  (The exception is when
 // initializing the allocator; see kinit above.)
+//释放物理页的函数
 void
 kfree(void *pa)
 {
   struct run *r;
   int temp;
-
+  // 检查传入的物理地址是否有效
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
     
@@ -66,9 +67,9 @@ kfree(void *pa)
     return;
 
 
-  // Fill with junk to catch dangling refs.
+  //填充释放的物理页内容，以捕获悬空引用
   memset(pa, 1, PGSIZE);
-
+  // 将释放的物理页链接到空闲页链表中
   r = (struct run*)pa;
 
   acquire(&kmem.lock);

@@ -30,29 +30,37 @@ trapinithart(void)
 }
 
 //实现写时复制的核心逻辑
-int
-cowhandler(pagetable_t pagetable, uint64 va)
+//当进程试图写入某个页时，操作系统会创建那个页的副本，在副本上进行修改，而不是直接修改原页
+int cowhandler(pagetable_t pagetable, uint64 va) //实现写时复制
 {
     char *mem;
-    if (va >= MAXVA)
-      return -1;
-    pte_t *pte = walk(pagetable, va, 0);
-    if (pte == 0)
-      return -1;
+    if (va >= MAXVA) 
+      return -1;  //如果虚拟地址大于最大虚拟地址，则返回错误
+
+    pte_t *pte = walk(pagetable, va, 0); //寻找虚拟地址对应的页表项
+    if (pte == 0) 
+      return -1;  //如果页表项不存在，返回错误
+
     if ((*pte & PTE_RSW) == 0 || (*pte & PTE_U) == 0 || (*pte & PTE_V) == 0) {
-      return -1;
+      return -1; //如果页表项属性不符合要求（不可读、不可写、不可访问），返回错误
     }
-    if ((mem = kalloc()) == 0) {
-      return -1;
+    if ((mem = kalloc()) == 0) {  
+      return -1;  //申请新的内存，如果申请失败返回错误
     }
-    uint64 pa = PTE2PA(*pte);
-    memmove((char*)mem, (char*)pa, PGSIZE);
-    kfree((void*)pa);
-    uint flags = PTE_FLAGS(*pte);
-    *pte = (PA2PTE(mem) | flags | PTE_W);
-    *pte &= ~PTE_RSW;
-    return 0;
+
+    uint64 pa = PTE2PA(*pte);  //获取页表项对应的物理地址
+    memmove((char*)mem, (char*)pa, PGSIZE); //将原来的内存复制到新的内存
+
+    kfree((void*)pa); //释放原来的内存
+
+    uint flags = PTE_FLAGS(*pte);  //获取页表项的标志位
+    *pte = (PA2PTE(mem) | flags | PTE_W); //设置新的页表项，包括新的物理地址mem，原来的标志位和新的写权限
+
+    *pte &= ~PTE_RSW;  //移除页表项的只读权限
+
+    return 0;  //返回成功
 }
+
 
 //
 // handle an interrupt, exception, or system call from user space.
@@ -90,14 +98,25 @@ usertrap(void)
     intr_on();
 
     syscall();
-  } else if (r_scause() == 15) { //写入页错误时调用 cowhandler 函数处理 Copy-on-Write 相关的操作
+  } 
+  else if (r_scause() == 15) {//写入页错误时调用 cowhandler 函数处理 Copy-on-Write 相关的操作
+    // 如果异常类型是 Store/AMO 地址无效异常（scause值为15）
+
     uint64 va = r_stval();
+    // 获取发生异常的虚拟地址
+
     if (va >= p->sz)
       p->killed = 1;
+    // 如果异常的虚拟地址大于或等于进程的内存大小，标记进程为killed
+
     int ret = cowhandler(p->pagetable, va);
+    // 调用cowhandler对该虚拟地址进行分页处理，返回值存储在ret中
+
     if (ret != 0)
       p->killed = 1;
-  } else if((which_dev = devintr()) != 0){
+    // 如果处理分页出现错误（返回值不为0），则标记进程为killed
+  }  
+  else if((which_dev = devintr()) != 0){
     // ok
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
