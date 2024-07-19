@@ -71,12 +71,35 @@ sys_sleep(void)
 
 
 #ifdef LAB_PGTBL
-int
+int 
 sys_pgaccess(void)
 {
-  // lab pgtbl: your code here.
-  return 0;
+  uint64 va; // 虚拟地址
+  int pagenum; // 页数
+  uint64 abitsaddr; // 存放访问位结果的地址
+
+  argaddr(0, &va); // 获取第一个参数：虚拟地址
+  argint(1, &pagenum); // 获取第二个参数：页数
+  argaddr(2, &abitsaddr); // 获取第三个参数：访问位结果地址
+
+  uint64 maskbits = 0; // 掩码位初始化为0
+  struct proc *proc = myproc(); // 获取当前进程结构
+  for (int i = 0; i < pagenum; i++) { // 遍历每一页
+    pte_t *pte = walk(proc->pagetable, va+i*PGSIZE, 0); // 获取页表条目
+    if (pte == 0)
+      panic("page not exist."); // 如果页表条目不存在，触发panic
+    if (PTE_FLAGS(*pte) & PTE_A) { // 如果页表条目访问位被设置
+      maskbits = maskbits | (1L << i); // 设置掩码位的相应位置
+    }
+    // 清除访问位，将PTE_A位设为0
+    *pte = ((*pte & PTE_A) ^ *pte) ^ 0;
+  }
+  if (copyout(proc->pagetable, abitsaddr, (char *)&maskbits, sizeof(maskbits)) < 0)
+    panic("sys_pgaccess copyout error"); // 如果copyout失败，触发panic
+
+  return 0; // 返回0表示成功
 }
+
 #endif
 
 uint64

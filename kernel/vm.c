@@ -437,3 +437,27 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return -1;
   }
 }
+
+static int printdeep =0; 
+void vmprint(pagetable_t pagetable)
+{
+  if (printdeep == 0)
+    printf("page table %p\n", (uint64)pagetable); // 如果是顶层页表，打印页表地址
+  for (int i = 0; i < 512; i++) { // 遍历页表的每个条目
+    pte_t pte = pagetable[i]; // 获取页表条目
+    if (pte & PTE_V) { // 如果页表条目有效
+      for (int j = 0; j <= printdeep; j++) { // 根据深度打印缩进
+        printf("..");
+      }
+      printf("%d: pte %p pa %p\n", i, (uint64)pte, (uint64)PTE2PA(pte)); // 打印条目索引、页表条目和物理地址
+    }
+    // 指向低一级的页表
+    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){ // 如果条目有效但没有设置读、写、执行权限，则认为是低级页表
+      printdeep++; // 增加深度
+      uint64 child_pa = PTE2PA(pte); // 获取低级页表的物理地址
+      vmprint((pagetable_t)child_pa); // 递归打印低级页表
+      printdeep--; // 减少深度
+    }
+  }
+}
+
