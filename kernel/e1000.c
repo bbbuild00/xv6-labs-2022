@@ -96,25 +96,51 @@ int
 e1000_transmit(struct mbuf *m)
 {
   //
-  // Your code here.
-  //
-  // the mbuf contains an ethernet frame; program it into
-  // the TX descriptor ring so that the e1000 sends it. Stash
-  // a pointer so that it can be freed after sending.
-  //
+  acquire(&e1000_lock);  //获取互斥锁
+  int idx = regs[E1000_TDT];  //获得传输描述符队列的索引
   
+  if(!(tx_ring[idx].status & E1000_TXD_STAT_DD)){ //检查当前传输描述符是否已经准备好接收新的数据包 ringbuffer是否可用
+    release(&e1000_lock);//释放互斥锁
+    return -1;
+  }
+  
+  if(tx_mbufs[idx]) //清空缓存区的旧数据包
+    mbuffree(tx_mbufs[idx]);
+   
+  tx_mbufs[idx] = m; //将堆栈区的包放到mbuf
+  tx_ring[idx].addr = (uint64)m->head; //设置传输描述符的物理地址
+  tx_ring[idx].length = m->len;  //设置包长度
+  tx_ring[idx].cmd = E1000_TXD_CMD_RS | E1000_TXD_CMD_EOP;  //设置状态位
+  regs[E1000_TDT] = (regs[E1000_TDT] + 1) % TX_RING_SIZE; //将索引向后移
+  release(&e1000_lock); //释放互斥锁
   return 0;
 }
 
 static void
 e1000_recv(void)
 {
-  //
-  // Your code here.
-  //
-  // Check for packets that have arrived from the e1000
-  // Create and deliver an mbuf for each packet (using net_rx()).
-  //
+  //持续接收
+  while(1){
+    int idx = (regs[E1000_RDT] + 1) % RX_RING_SIZE; //获得索引
+    
+    if(!(rx_ring[idx].status & E1000_RXD_STAT_DD)) //当前ring buffer是否可用
+       return;
+    
+    rx_mbufs[idx]->len = rx_ring[idx].length; //将mubf的len位更新为缓存区的len
+  
+    net_rx(rx_mbufs[idx]); //传输到网络堆栈区
+    
+    //把这个缓存区清空，重新分配一块mbuf
+    rx_mbufs[idx] = mbufalloc(0); 
+    if(!rx_mbufs[idx])
+      panic("e1000");
+    //初始化下一个接收描述符
+    rx_ring[idx].status = 0;
+    rx_ring[idx].addr = (uint64)rx_mbufs[idx]->head;
+    
+    //更新索引
+    regs[E1000_RDT] = idx;
+  }
 }
 
 void
@@ -127,3 +153,4 @@ e1000_intr(void)
 
   e1000_recv();
 }
+
