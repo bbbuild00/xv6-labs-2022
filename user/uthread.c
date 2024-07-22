@@ -10,11 +10,11 @@
 #define STACK_SIZE  8192
 #define MAX_THREAD  4
 
-//上下文
 struct context {
-  uint64 ra; 
-  uint64 sp;
+  uint64 ra; // 返回地址
+  uint64 sp; // 栈指针
 
+  // 被调用者保存的寄存器
   uint64 s0;
   uint64 s1;
   uint64 s2;
@@ -28,11 +28,13 @@ struct context {
   uint64 s10;
   uint64 s11;
 };
+
 struct thread {
-  char       stack[STACK_SIZE]; /* the thread's stack */
-  int        state;             /* FREE, RUNNING, RUNNABLE */
-  struct context context;   //上下文
+  char       stack[STACK_SIZE]; /* 线程的栈 */
+  int        state;             /* 线程的状态：FREE（空闲），RUNNING（运行），RUNNABLE（可运行） */
+  struct context context;       // 寄存器上下文
 };
+
 struct thread all_thread[MAX_THREAD];
 struct thread *current_thread;
 extern void thread_switch(struct context *old, struct context *new);
