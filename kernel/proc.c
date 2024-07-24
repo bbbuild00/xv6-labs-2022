@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "mman.h"
 
 struct cpu cpus[NCPU];
 
@@ -287,6 +288,10 @@ fork(void)
   if((np = allocproc()) == 0){
     return -1;
   }
+  memmove((char*)np->vma,(char*)p->vma,sizeof p->vma);//拷贝VMA
+  for(int i = 0; i < 16 ;i++)//增加引用
+    if(np->vma[i].addr) 
+      filedup(np->vma[i].file);
 
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
@@ -350,6 +355,18 @@ exit(int status)
 
   if(p == initproc)
     panic("init exiting");
+  
+  for(int i = 0; i < 16; i++){
+    if(p->vma[i].addr){
+      int len = p->vma[i].length - p->vma[i].free_len;
+      uint64 addr = p->vma[i].addr + p->vma[i].free_len;
+      if(p->vma[i].flags & MAP_SHARED)//需要写回
+        filewrite(p->vma[i].file, addr, len);
+      uvmunmap(p->pagetable, addr, len/PGSIZE, 1);//释放映射
+      fileclose(p->vma[i].file);
+      p->vma[i].addr = 0;
+    }
+  }
 
   // Close all open files.
   for(int fd = 0; fd < NOFILE; fd++){
