@@ -385,39 +385,72 @@ bmap(struct inode *ip, uint bn)
   uint addr, *a;
   struct buf *bp;
 
-  if(bn < NDIRECT){
-    if((addr = ip->addrs[bn]) == 0){
+  if(bn < NDIRECT){ // 0-10
+    if((addr = ip->addrs[bn]) == 0){ // 未分配块
       addr = balloc(ip->dev);
       if(addr == 0)
-        return 0;
-      ip->addrs[bn] = addr;
+        return 0; // 分配内存失败
+      ip->addrs[bn] = addr;// 记录分配到的地址
     }
     return addr;
   }
-  bn -= NDIRECT;
+  bn -= NDIRECT; // bn超出直接分配的地址范围，进一步判断是一级还是二级
 
-  if(bn < NINDIRECT){
-    // Load indirect block, allocating if necessary.
-    if((addr = ip->addrs[NDIRECT]) == 0){
+  if(bn < NINDIRECT){ //0-255 实际为11-266
+    if((addr = ip->addrs[NDIRECT]) == 0){ // 未分配一级索引块
       addr = balloc(ip->dev);
       if(addr == 0)
         return 0;
       ip->addrs[NDIRECT] = addr;
     }
-    bp = bread(ip->dev, addr);
+    bp = bread(ip->dev, addr); // 将一级索引块（列表）的内容从磁盘读到缓冲区
     a = (uint*)bp->data;
     if((addr = a[bn]) == 0){
       addr = balloc(ip->dev);
-      if(addr){
+      if(addr){ // 分配成功
         a[bn] = addr;
         log_write(bp);
       }
     }
-    brelse(bp);
+    brelse(bp); // 释放一级索引表占用的缓存空间
     return addr;
   }
+  bn -= NINDIRECT; // bn超出一级的地址范围，进一步判断是否是二级
+  
+  if(bn < NINDIRECT * NINDIRECT) { // 0-（256*256-1） 实际为（11+256）-（11+256+256*256-1）
+    if((addr = ip->addrs[NDIRECT+1]) == 0){ // 检查是否已分配二级间接块
+      ip->addrs[NDIRECT+1] = addr = balloc(ip->dev); // 未分配则分配一个新的块
+      if(addr == 0)
+        return 0;
+    }
+    bp = bread(ip->dev, addr); // 读取二级间接块
+    a = (uint*)bp->data; // 将数据指针指向二级间接块的数据部分
 
-  panic("bmap: out of range");
+    // Check and allocate the first level indirect block
+    if((addr = a[bn/NINDIRECT]) == 0){ // 计算一级间接块在二级间接块中的索引
+      a[bn/NINDIRECT] = addr = balloc(ip->dev); // 未分配则分配一个新的块
+      if(addr == 0)
+        return 0;
+      log_write(bp); // 将分配操作写入日志
+    }
+    brelse(bp); // 释放二级间接块缓存
+  
+    bn %= NINDIRECT; // 计算块号在一级间接块中的偏移量
+    bp = bread(ip->dev, addr); // 读取一级间接块
+    a = (uint*)bp->data; // 将数据指针指向一级间接块的数据部分
+
+    // Check and allocate the data block
+    if((addr = a[bn]) == 0){ // 计算数据块在一级间接块中的索引
+      a[bn] = addr = balloc(ip->dev); // 未分配则分配一个新的块
+      log_write(bp); // 将分配操作写入日志
+    }
+    brelse(bp); // 释放一级间接块缓存
+
+    return addr; // 返回数据块地址
+  }
+
+
+  panic("bmap: out of range"); // 超出二级的范围，说明这种映射方式可以使用的块数还是无法满足文件的需求
 }
 
 // Truncate inode (discard contents).
@@ -447,6 +480,25 @@ itrunc(struct inode *ip)
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
   }
+  if(ip->addrs[NDIRECT+1]){  // 如果二级间接块指针非空
+  bp = bread(ip->dev, ip->addrs[NDIRECT+1]);  // 读取二级间接块
+  a = (uint*)bp->data;  // 获取二级间接块中的数据（即一级间接块的地址）
+  for(j = 0; j < NINDIRECT; j++){  // 遍历每一个一级间接块
+    if(a[j]) {  // 如果一级间接块指针非空
+      struct buf *bp2 = bread(ip->dev, a[j]);  // 读取一级间接块
+      uint *a2 = (uint*)bp2->data;  // 获取一级间接块中的数据（即数据块的地址）
+      for(int k = 0; k < NINDIRECT; k++){  // 遍历每一个数据块
+        if(a2[k])  // 如果数据块指针非空
+          bfree(ip->dev, a2[k]);  // 释放数据块
+      }
+      brelse(bp2);  // 释放一级间接块的缓冲区
+      bfree(ip->dev, a[j]);  // 释放一级间接块
+    }
+  }
+  brelse(bp);  // 释放二级间接块的缓冲区
+  bfree(ip->dev, ip->addrs[NDIRECT+1]);  // 释放二级间接块
+  ip->addrs[NDIRECT+1] = 0;  // 清空二级间接块指针
+}
 
   ip->size = 0;
   iupdate(ip);
